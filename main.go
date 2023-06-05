@@ -6,7 +6,12 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
+	"github.com/faiface/beep"
+	"github.com/faiface/beep/mp3"
+	"github.com/faiface/beep/speaker"
 	"github.com/kbinani/screenshot"
 	"image/png"
 	"io/ioutil"
@@ -15,31 +20,25 @@ import (
 	"time"
 )
 
-var tmpFilename string = "tmp.png"
+var tmpFilename string
 
 func main() {
 	a := app.New()
 	w := a.NewWindow("Screenshots")
 
-	_, error := os.Stat(tmpFilename)
-
 	var image *canvas.Image
 
-	if !os.IsNotExist(error) {
-		image = canvas.NewImageFromFile(tmpFilename)
-		image.FillMode = canvas.ImageFillContain
-		image.SetMinSize(fyne.NewSize(200, 250))
-		image.Refresh()
-	} else {
-		image = canvas.NewImageFromResource(nil)
-	}
+	image = canvas.NewImageFromFile(tmpFilename)
+	image.FillMode = canvas.ImageFillContain
+	image.SetMinSize(fyne.NewSize(200, 250))
+	image.Refresh()
 
 	btn := widget.NewButton("Take Screenshot", func() {
-		takeScreenshot(image)
+		takeScreenshot(image, w)
 	})
 
 	btn2 := widget.NewButton("Save to Pictures", func() {
-		saveToPictures()
+		saveToPictures(w)
 	})
 
 	btns := container.NewGridWithColumns(2, btn, btn2)
@@ -47,45 +46,92 @@ func main() {
 		container.NewBorder(nil, btns, nil, nil, image),
 	)
 
-	w.Resize(fyne.NewSize(380, 220))
+	w.Resize(fyne.NewSize(610, 420))
 	w.ShowAndRun()
 }
 
-func takeScreenshot(image *canvas.Image) {
+func takeScreenshot(image *canvas.Image, w fyne.Window) {
+	playSound()
+
+	w.Hide()
+	time.Sleep(time.Millisecond * 300)
+	w.Show()
+	os.Remove(tmpFilename)
+
 	bounds := screenshot.GetDisplayBounds(0)
 
 	img, err := screenshot.CaptureRect(bounds)
 	if err != nil {
 		panic(err)
 	}
-	fileName := fmt.Sprintf("tmp.png")
-	file, _ := os.Create(fileName)
+
+	fileName := fmt.Sprintf("screenshot-")
+
+	file, err := os.CreateTemp("", fileName)
+
 	defer file.Close()
+
 	png.Encode(file, img)
 
-	image.File = "tmp.png"
+	tmpFilename = file.Name()
+
+	image.File = tmpFilename
 	image.Refresh()
+
 }
 
-func saveToPictures() {
-	input, err := ioutil.ReadFile("tmp.png")
+func saveToPictures(w fyne.Window) {
+	input, err := ioutil.ReadFile(tmpFilename)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	now := time.Now()
 
+	d := dialog.NewFileSave(func(write fyne.URIWriteCloser, err error) {
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		if write == nil {
+			return
+		}
+		write.Write(input)
+		defer write.Close()
+		return
+	}, w)
+
+	d.SetFileName(now.Format("Screenshot at 15:04:05") + ".png")
+
 	dirname, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	destinationFile := dirname + "/Pictures/" + now.Format("15:04:05") + ".png"
+	fileURI := storage.NewFileURI(dirname + "/Pictures")
+	fileLister, _ := storage.ListerForURI(fileURI)
+	d.SetLocation(fileLister)
 
-	err = ioutil.WriteFile(destinationFile, input, 0644)
+	d.Show()
+}
+
+func playSound() {
+	f, err := os.Open("camera-shutter-click.mp3")
 	if err != nil {
-		fmt.Println("Error creating", destinationFile)
-		fmt.Println(err)
-		return
+		log.Fatal(err)
 	}
+
+	streamer, format, err := mp3.Decode(f)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer streamer.Close()
+
+	speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+	done := make(chan bool)
+	speaker.Play(beep.Seq(streamer, beep.Callback(func() {
+		done <- true
+	})))
+
+	<-done
 }

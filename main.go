@@ -116,7 +116,23 @@ func saveToPictures(w fyne.Window) {
 }
 
 func playSound() {
-	f, err := os.Open("camera-shutter-click.mp3")
+	// create and open a temporary file
+	f, err := os.CreateTemp("", "shutter") // in Go version older than 1.17 you can use ioutil.TempFile
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// close and remove the temporary file at the end of the program
+	defer f.Close()
+	defer os.Remove(f.Name())
+
+	// write data to the temporary file
+	data := resourceCameraShutterClickMp3.StaticContent
+	if _, err := f.Write(data); err != nil {
+		log.Fatal(err)
+	}
+
+	f, err = os.Open(f.Name())
 	if err != nil {
 		log.Fatal(err)
 	}
